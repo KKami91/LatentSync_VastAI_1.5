@@ -390,6 +390,7 @@ class LatentSyncNode:
     def inference(self, images, audio, seed, lips_expression=1.5, inference_steps=20):
         # Use our module temp directory
         global MODULE_TEMP_DIR
+        torch.cuda.empty_cache()
         
         # Get GPU capabilities and memory
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -447,32 +448,39 @@ class LatentSyncNode:
             temp_video_path = os.path.join(temp_dir, f"temp_{run_id}.mp4")
             output_video_path = os.path.join(temp_dir, f"latentsync_{run_id}_out.mp4")
             audio_path = os.path.join(temp_dir, f"latentsync_{run_id}_audio.wav")
-            
+            torch.cuda.empty_cache()
             # Get the extension directory
             cur_dir = os.path.dirname(os.path.abspath(__file__))
             
             # Process input frames
             if isinstance(images, list):
-                frames = torch.stack(images).to(device)
+                #frames = torch.stack(images).to(device)
+                frames = torch.stack(images)
             else:
-                frames = images.to(device)
+                #frames = images.to(device)
+                frames = images
             frames = (frames * 255).byte()
 
             if len(frames.shape) == 3:
                 frames = frames.unsqueeze(0)
 
             # Process audio with device awareness
-            waveform = audio["waveform"].to(device)
+            #waveform = audio["waveform"].to(device)
+            waveform = audio["waveform"]
             sample_rate = audio["sample_rate"]
             if waveform.dim() == 3:
                 waveform = waveform.squeeze(0)
 
             if sample_rate != 16000:
                 new_sample_rate = 16000
+                # resampler = torchaudio.transforms.Resample(
+                #     orig_freq=sample_rate,
+                #     new_freq=new_sample_rate
+                # ).to(device)
                 resampler = torchaudio.transforms.Resample(
                     orig_freq=sample_rate,
                     new_freq=new_sample_rate
-                ).to(device)
+                )
                 waveform_16k = resampler(waveform)
                 waveform, sample_rate = waveform_16k, new_sample_rate
 
@@ -481,7 +489,7 @@ class LatentSyncNode:
                 "waveform": waveform.unsqueeze(0),
                 "sample_rate": sample_rate
             }
-            
+            torch.cuda.empty_cache()
             # Move waveform to CPU for saving
             waveform_cpu = waveform.cpu()
             torchaudio.save(audio_path, waveform_cpu, sample_rate)
@@ -513,7 +521,7 @@ class LatentSyncNode:
             scheduler_config_path = os.path.join(cur_dir, "configs")
             ckpt_path = os.path.join(cur_dir, "checkpoints", "latentsync_unet.pt")
             whisper_ckpt_path = os.path.join(cur_dir, "checkpoints", "whisper", "tiny.pt")
-
+            torch.cuda.empty_cache()
             # Create config and args
             config = OmegaConf.load(config_path)
 
@@ -549,7 +557,7 @@ class LatentSyncNode:
                 temp_dir=temp_dir,
                 mask_image_path=mask_image_path
             )
-
+            torch.cuda.empty_cache()
             # Set PYTHONPATH to include our directories 
             package_root = os.path.dirname(cur_dir)
             if package_root not in sys.path:
@@ -567,7 +575,7 @@ class LatentSyncNode:
                     os.rename(comfyui_temp, f"{comfyui_temp}_backup_{uuid.uuid4().hex[:8]}")
                 except:
                     pass
-
+            torch.cuda.empty_cache()
             # Import the inference module
             inference_module = import_inference_script(inference_script_path)
             
@@ -593,7 +601,7 @@ class LatentSyncNode:
             # Read the processed video - ensure it's loaded as CPU tensor
             processed_frames = io.read_video(output_video_path, pts_unit='sec')[0]
             processed_frames = processed_frames.float() / 255.0
-
+            torch.cuda.empty_cache()
             # Ensure audio is on CPU before returning
             if torch.cuda.is_available():
                 if hasattr(resampled_audio["waveform"], 'device') and resampled_audio["waveform"].device.type == 'cuda':
