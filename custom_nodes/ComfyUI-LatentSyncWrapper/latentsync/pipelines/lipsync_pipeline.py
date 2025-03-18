@@ -271,9 +271,6 @@ class LipsyncPipeline(DiffusionPipeline):
             
         Returns:
             tuple: 감지된 얼굴, 원본 비디오 프레임, 얼굴 위치 박스, 변환 행렬, 얼굴이 감지된 프레임 인덱스
-            
-        Raises:
-            ValueError: 비디오의 모든 프레임에서 얼굴이 감지되지 않은 경우
         """
         # 비디오 프레임 읽기
         video_frames = read_video(video_path, use_decord=False)
@@ -285,28 +282,21 @@ class LipsyncPipeline(DiffusionPipeline):
         print(f"전체 {len(video_frames)}개 프레임에 대해 얼굴 변환 처리 중...")
         
         for i, frame in enumerate(tqdm.tqdm(video_frames)):
-            try:
-                # 프레임에서 얼굴 감지 시도
-                face, box, affine_matrix = self.image_processor.affine_transform(frame)
-                
-                # 얼굴이 올바르게 감지되었는지 명시적으로 확인
-                if face is not None and isinstance(face, torch.Tensor):
-                    faces.append(face)
-                    boxes.append(box)
-                    affine_matrices.append(affine_matrix)
-                    frame_indices.append(i)  # 얼굴이 감지된 프레임 인덱스 저장
-            except Exception as e:
-                print(f"프레임 {i}에서 예외 발생: {str(e)}")
-                if "No face detected" in str(e):
-                    # 얼굴이 없는 프레임은 건너뜀
-                    continue
-                else:
-                    # 다른 오류는 그대로 발생시킴
-                    raise e
+            # 프레임에서 얼굴 감지 시도
+            face, box, affine_matrix = self.image_processor.affine_transform(frame)
+            
+            # 얼굴이 올바르게 감지되었는지 명시적으로 확인
+            if face is not None and box is not None and affine_matrix is not None:
+                faces.append(face)
+                boxes.append(box)
+                affine_matrices.append(affine_matrix)
+                frame_indices.append(i)  # 얼굴이 감지된 프레임 인덱스 저장
+            elif i % 50 == 0:  # 너무 많은 메시지 출력 방지
+                print(f"프레임 {i}에서 얼굴 감지 실패")
         
         if not faces:
             # 얼굴이 감지되지 않은 경우 메시지 출력 후 빈 결과 반환
-            print("비디오의 모든 프레임에서 얼굴이 감지되지 않았습니다. 원본 비디오 반환됩니다.")
+            print("비디오의 모든 프레임에서 얼굴이 감지되지 않았습니다. 원본 비디오가 반환됩니다.")
             return torch.tensor([]), video_frames, [], [], []
         
         # 감지된 얼굴만 처리
