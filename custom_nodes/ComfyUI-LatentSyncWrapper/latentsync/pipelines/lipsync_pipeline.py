@@ -249,19 +249,70 @@ class LipsyncPipeline(DiffusionPipeline):
         images = images.cpu().numpy()
         return images
 
-    def affine_transform_video(self, video_frames: np.ndarray):
+    # def affine_transform_video(self, video_frames: np.ndarray):
+    #     faces = []
+    #     boxes = []
+    #     affine_matrices = []
+    #     print(f"Affine transforming {len(video_frames)} faces...")
+    #     for frame in tqdm.tqdm(video_frames):
+    #         face, box, affine_matrix = self.image_processor.affine_transform(frame)
+    #         faces.append(face)
+    #         boxes.append(box)
+    #         affine_matrices.append(affine_matrix)
+
+    #     faces = torch.stack(faces)
+    #     return faces, boxes, affine_matrices
+
+    def affine_transform_video(self, video_path):
+        """비디오 프레임에서 얼굴을 감지하고 변환하는 함수
+        
+        Args:
+            video_path (str): 비디오 파일 경로
+            
+        Returns:
+            tuple: 감지된 얼굴, 원본 비디오 프레임, 얼굴 위치 박스, 변환 행렬, 얼굴이 감지된 프레임 인덱스
+            
+        Raises:
+            ValueError: 비디오의 모든 프레임에서 얼굴이 감지되지 않은 경우
+        """
+        # 비디오 프레임 읽기
+        video_frames = read_video(video_path, use_decord=False)
         faces = []
         boxes = []
         affine_matrices = []
-        print(f"Affine transforming {len(video_frames)} faces...")
-        for frame in tqdm.tqdm(video_frames):
-            face, box, affine_matrix = self.image_processor.affine_transform(frame)
-            faces.append(face)
-            boxes.append(box)
-            affine_matrices.append(affine_matrix)
-
+        frame_indices = []  # 얼굴이 감지된 프레임의 인덱스를 저장
+        
+        print(f"전체 {len(video_frames)}개 프레임에 대해 얼굴 변환 처리 중...")
+        
+        for i, frame in enumerate(tqdm.tqdm(video_frames)):
+            try:
+                # 프레임에서 얼굴 감지 시도
+                face, box, affine_matrix = self.image_processor.affine_transform(frame)
+                
+                # 얼굴이 올바르게 감지되었는지 명시적으로 확인
+                if face is not None and isinstance(face, torch.Tensor):
+                    faces.append(face)
+                    boxes.append(box)
+                    affine_matrices.append(affine_matrix)
+                    frame_indices.append(i)  # 얼굴이 감지된 프레임 인덱스 저장
+            except Exception as e:
+                print(f"프레임 {i}에서 예외 발생: {str(e)}")
+                if "No face detected" in str(e):
+                    # 얼굴이 없는 프레임은 건너뜀
+                    continue
+                else:
+                    # 다른 오류는 그대로 발생시킴
+                    raise e
+        
+        if not faces:
+            # 모든 프레임에서 얼굴이 감지되지 않은 경우
+            raise ValueError("비디오의 모든 프레임에서 얼굴이 감지되지 않았습니다. 얼굴이 보이는 비디오를 사용해주세요.")
+        
+        # 감지된 얼굴만 처리
         faces = torch.stack(faces)
-        return faces, boxes, affine_matrices
+        
+        # 얼굴이 감지된 프레임, 관련 메타데이터와 함께 반환
+        return faces, video_frames, boxes, affine_matrices, frame_indices
 
     def restore_video(self, faces, video_frames, boxes, affine_matrices):
         video_frames = video_frames[: faces.shape[0]]
