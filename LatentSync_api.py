@@ -273,6 +273,11 @@ def process_latentsync(video_data: bytes, audio_data: bytes, video_name: str, cu
                 logger.info("Starting LatentSync processing...")
 
                 try:
+                    logger.info("====================================================================")
+                    logger.info(f"custom_width_ : {custom_width_}, custom_height_ : {custom_height_}")
+                    logger.info(f"force_rate : {force_rate}, fps : {fps}")
+                    logger.info(f"lips_expression_ : {lips_expression_}, inference_steps_ : {inference_steps_}")
+                    logger.info("====================================================================")
                     with torch.inference_mode():
                         loadaudio = NODE_CLASS_MAPPINGS["LoadAudio"]()
                         loadaudio_37 = loadaudio.load(audio=audio_path)
@@ -285,8 +290,8 @@ def process_latentsync(video_data: bytes, audio_data: bytes, video_name: str, cu
                             force_rate=force_rate,
                             #custom_width=custom_width_,
                             #custom_height=custom_height_,
-                            custom_width=0,
-                            custom_height=0,
+                            custom_width=custom_width_,
+                            custom_height=custom_height_,
                             frame_load_cap=0,
                             skip_first_frames=0,
                             select_every_nth=1,
@@ -506,6 +511,12 @@ def handle_latentsync():
         # force_rate, fps 조절
         force_rate = int(data.get('force_rate', 25))
         fps = float(data.get('fps', 25.0))
+
+        logger.info("--------------------------------------------------------------------")
+        logger.info(f"custom_width : {custom_width}, custom_height : {custom_height}")
+        logger.info(f"force_rate : {force_rate}, fps : {fps}")
+        logger.info(f"lips_expression : {lips_expression}, inference_steps : {inference_steps}")
+        logger.info("--------------------------------------------------------------------")
 
         # 처리
         result = process_latentsync(
