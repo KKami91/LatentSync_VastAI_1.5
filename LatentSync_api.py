@@ -232,7 +232,9 @@ def import_custom_nodes() -> None:
     init_extra_nodes()
 
 
-def process_latentsync(video_data: bytes, audio_data: bytes, video_name: str, custom_width_: int, custom_height_: int, force_rate: int, fps: float, lips_expression_: float, inference_steps_: int):
+def process_latentsync(video_data: bytes, audio_data: bytes, video_name: str, custom_width_: int, 
+                       custom_height_: int, force_rate: int, fps: float, lips_expression_: float, 
+                       inference_steps_: int):
     from nodes import NODE_CLASS_MAPPINGS
 
     # 사용 가능한 GPU 할당 받기
@@ -498,8 +500,8 @@ def handle_latentsync():
             return jsonify({"success": False, "error": "Invalid base64 encoding"}), 400
         
 
-        lips_expression = float(data.get('lips_expression'))
-        inference_steps = int(data.get('inference_steps'))
+        lips_expression = float(data.get('lips_expression', 1.5))
+        inference_steps = int(data.get('inference_steps', 20))
         
         # force_rate, fps 조절
         force_rate = int(data.get('force_rate', 25))
