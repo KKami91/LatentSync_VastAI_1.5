@@ -305,8 +305,9 @@ class LipsyncPipeline(DiffusionPipeline):
                     raise e
         
         if not faces:
-            # 모든 프레임에서 얼굴이 감지되지 않은 경우
-            raise ValueError("비디오의 모든 프레임에서 얼굴이 감지되지 않았습니다. 얼굴이 보이는 비디오를 사용해주세요.")
+            # 얼굴이 감지되지 않은 경우 메시지 출력 후 빈 결과 반환
+            print("비디오의 모든 프레임에서 얼굴이 감지되지 않았습니다. 원본 비디오 반환됩니다.")
+            return torch.tensor([]), video_frames, [], [], []
         
         # 감지된 얼굴만 처리
         faces = torch.stack(faces)
@@ -315,6 +316,10 @@ class LipsyncPipeline(DiffusionPipeline):
         return faces, video_frames, boxes, affine_matrices, frame_indices
 
     def restore_video(self, faces, video_frames, boxes, affine_matrices):
+        # 얼굴이 감지되지 않은 경우 원본 비디오 반환
+        if faces.shape[0] == 0:
+            return np.array(video_frames)
+            
         video_frames = video_frames[: faces.shape[0]]
         out_frames = []
         print(f"Restoring {len(faces)} faces...")
@@ -389,21 +394,49 @@ class LipsyncPipeline(DiffusionPipeline):
         whisper_chunks = self.audio_encoder.feature2chunks(feature_array=whisper_feature, fps=video_fps)
 
         audio_samples = read_audio(audio_path)
-        video_frames = read_video(video_path, use_decord=False)
+        
+        # 비디오 프레임 얼굴 감지 및 변환
+        faces, video_frames, boxes, affine_matrices, frame_indices = self.affine_transform_video(video_path)
+        
+        # 얼굴이 감지되지 않은 경우
+        if len(faces) == 0:
+            # 원본 비디오와 오디오 결합만 수행
+            temp_dir = "temp"
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            # 비디오와 오디오 길이 맞추기
+            audio_samples_remain_length = int(len(video_frames) / video_fps * audio_sample_rate)
+            audio_samples = audio_samples[:audio_samples_remain_length].cpu().numpy()
+            
+            write_video(os.path.join(temp_dir, "video.mp4"), video_frames, fps=25)
+            sf.write(os.path.join(temp_dir, "audio.wav"), audio_samples, audio_sample_rate)
+            
+            command = f"ffmpeg -y -loglevel error -nostdin -i {os.path.join(temp_dir, 'video.mp4')} -i {os.path.join(temp_dir, 'audio.wav')} -c:v libx264 -c:a aac -q:v 0 -q:a 0 {video_out_path}"
+            subprocess.run(command, shell=True)
+            
+            return
+        
+        # 얼굴이 감지된 프레임들을 num_frames 크기의 청크로 나누기
+        frame_chunks = []
+        for i in range(0, len(frame_indices), num_frames):
+            chunk = frame_indices[i:i+num_frames]
+            if len(chunk) == num_frames:  # 완전한 청크만 처리
+                frame_chunks.append(chunk)
 
-        num_inferences = min(len(video_frames), len(whisper_chunks)) // num_frames
-        video_frames = video_frames[: num_inferences * num_frames]
-        faces, boxes, affine_matrices = self.affine_transform_video(video_frames)
+        num_inferences = len(frame_chunks)
+        print(f"얼굴이 감지된 {num_inferences}개의 프레임 청크 처리 중")
 
-        synced_video_frames = []
-        masked_video_frames = []
+        # 최종 결과 비디오를 위한 프레임 배열 초기화 (원본 비디오 프레임으로)
+        final_frames = np.array(video_frames)
 
         num_channels_latents = self.vae.config.latent_channels
 
         # Prepare latent variables
         all_latents = self.prepare_latents(
             batch_size,
-            num_frames * num_inferences,
+            num_frames,
             num_channels_latents,
             height,
             width,
@@ -412,19 +445,31 @@ class LipsyncPipeline(DiffusionPipeline):
             generator,
         )
 
-        for i in tqdm.tqdm(range(num_inferences), desc="Doing inference..."):
+        for chunk_idx, chunk in enumerate(tqdm.tqdm(frame_chunks, desc="얼굴 청크 처리 중")):
+            # 현재 청크의 프레임들 가져오기
+            chunk_indices = [frame_indices.index(idx) for idx in chunk]
+            chunk_frames = [faces[idx] for idx in chunk_indices]
+            chunk_frames_tensor = torch.stack(chunk_frames)
+            
+            # 현재 청크의 박스와 변환 행렬 가져오기
+            chunk_boxes = [boxes[idx] for idx in chunk_indices]
+            chunk_affine_matrices = [affine_matrices[idx] for idx in chunk_indices]
+            
             if self.denoising_unet.add_audio_layer:
-                audio_embeds = torch.stack(whisper_chunks[i * num_frames : (i + 1) * num_frames])
+                # 현재 청크에 해당하는 오디오 특성 가져오기
+                audio_embeds = torch.stack([whisper_chunks[idx] for idx in chunk])
                 audio_embeds = audio_embeds.to(device, dtype=weight_dtype)
                 if do_classifier_free_guidance:
                     null_audio_embeds = torch.zeros_like(audio_embeds)
                     audio_embeds = torch.cat([null_audio_embeds, audio_embeds])
             else:
                 audio_embeds = None
-            inference_faces = faces[i * num_frames : (i + 1) * num_frames]
-            latents = all_latents[:, :, i * num_frames : (i + 1) * num_frames]
+            
+            # 현재 청크에 대한 latent 초기화
+            latents = all_latents.clone()
+            
             ref_pixel_values, masked_pixel_values, masks = self.image_processor.prepare_masks_and_masked_images(
-                inference_faces, affine_transform=False
+                chunk_frames_tensor, affine_transform=False
             )
 
             # 7. Prepare mask latent variables
@@ -486,17 +531,39 @@ class LipsyncPipeline(DiffusionPipeline):
             decoded_latents = self.paste_surrounding_pixels_back(
                 decoded_latents, ref_pixel_values, 1 - masks, device, weight_dtype
             )
-            synced_video_frames.append(decoded_latents)
-            # masked_video_frames.append(masked_pixel_values)
+            
+            # 처리된 얼굴 프레임 획득
+            processed_faces = decoded_latents
+            
+            # 원본 비디오에 처리된 얼굴 적용
+            for i, frame_idx in enumerate(chunk):
+                try:
+                    face = processed_faces[i]
+                    x1, y1, x2, y2 = chunk_boxes[i]
+                    height_box = int(y2 - y1)
+                    width_box = int(x2 - x1)
+                    
+                    # 얼굴 크기 조정
+                    face = torchvision.transforms.functional.resize(face, size=(height_box, width_box), antialias=True)
+                    face = rearrange(face, "c h w -> h w c")
+                    face = (face / 2 + 0.5).clamp(0, 1)
+                    face = (face * 255).to(torch.uint8).cpu().numpy()
+                    
+                    # 원본 프레임에 처리된 얼굴 적용
+                    restored_frame = self.image_processor.restorer.restore_img(
+                        video_frames[frame_idx], 
+                        face, 
+                        chunk_affine_matrices[i]
+                    )
+                    
+                    # 최종 결과 비디오 프레임 업데이트
+                    final_frames[frame_idx] = restored_frame
+                except Exception as e:
+                    print(f"프레임 {frame_idx} 처리 중 오류 발생: {str(e)}")
+                    # 오류 발생 시 원본 프레임 유지
+                    continue
 
-        synced_video_frames = self.restore_video(
-            torch.cat(synced_video_frames), video_frames, boxes, affine_matrices
-        )
-        # masked_video_frames = self.restore_video(
-        #     torch.cat(masked_video_frames), video_frames, boxes, affine_matrices
-        # )
-
-        audio_samples_remain_length = int(synced_video_frames.shape[0] / video_fps * audio_sample_rate)
+        audio_samples_remain_length = int(len(final_frames) / video_fps * audio_sample_rate)
         audio_samples = audio_samples[:audio_samples_remain_length].cpu().numpy()
 
         if is_train:
@@ -507,9 +574,7 @@ class LipsyncPipeline(DiffusionPipeline):
             shutil.rmtree(temp_dir)
         os.makedirs(temp_dir, exist_ok=True)
 
-        write_video(os.path.join(temp_dir, "video.mp4"), synced_video_frames, fps=25)
-        # write_video(video_mask_path, masked_video_frames, fps=25)
-
+        write_video(os.path.join(temp_dir, "video.mp4"), final_frames, fps=25)
         sf.write(os.path.join(temp_dir, "audio.wav"), audio_samples, audio_sample_rate)
 
         command = f"ffmpeg -y -loglevel error -nostdin -i {os.path.join(temp_dir, 'video.mp4')} -i {os.path.join(temp_dir, 'audio.wav')} -c:v libx264 -c:a aac -q:v 0 -q:a 0 {video_out_path}"
