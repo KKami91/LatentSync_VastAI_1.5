@@ -282,6 +282,8 @@ def process_latentsync(video_data: bytes, audio_data: bytes, video_name: str, cu
                         loadaudio = NODE_CLASS_MAPPINGS["LoadAudio"]()
                         loadaudio_37 = loadaudio.load(audio=audio_path)
 
+                        logger.info("Load Audio Finish....")
+
                         # LoadVideo
                         vhs_loadvideo = NODE_CLASS_MAPPINGS["VHS_LoadVideo"]()
                         vhs_loadvideo_40 = vhs_loadvideo.load_video(
@@ -299,6 +301,8 @@ def process_latentsync(video_data: bytes, audio_data: bytes, video_name: str, cu
                             unique_id=12015943199208297010,
                         )
 
+                        logger.info("Load Video Finish....")
+
                         videolengthadjuster = NODE_CLASS_MAPPINGS["VideoLengthAdjuster"]()
                         latentsyncnode = NODE_CLASS_MAPPINGS["LatentSyncNode"]()
                         vhs_videocombine = NODE_CLASS_MAPPINGS["VHS_VideoCombine"]()
@@ -307,10 +311,12 @@ def process_latentsync(video_data: bytes, audio_data: bytes, video_name: str, cu
                             mode="pingpong",
                             #fps=25,
                             fps=fps,
-                            silent_padding_sec=0.5,
+                            #silent_padding_sec=0.5,
+                            silent_padding_sec=0,
                             images=get_value_at_index(vhs_loadvideo_40, 0),
                             audio=get_value_at_index(loadaudio_37, 0),
                         )                                                            
+                        logger.info("Video Length Adjuster Finish....")
 
                         try:
                             # LatentSync processing attempt
