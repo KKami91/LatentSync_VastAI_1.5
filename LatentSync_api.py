@@ -234,7 +234,7 @@ def import_custom_nodes() -> None:
 
 def process_latentsync(video_data: bytes, audio_data: bytes, video_name: str, custom_width_: int, 
                        custom_height_: int, force_rate: int, fps: float, lips_expression_: float, 
-                       inference_steps_: int):
+                       inference_steps_: int, mode_: str):
     from nodes import NODE_CLASS_MAPPINGS
 
     # 사용 가능한 GPU 할당 받기
@@ -308,7 +308,7 @@ def process_latentsync(video_data: bytes, audio_data: bytes, video_name: str, cu
                         vhs_videocombine = NODE_CLASS_MAPPINGS["VHS_VideoCombine"]()
 
                         videolengthadjuster_55 = videolengthadjuster.adjust(
-                            mode="pingpong",
+                            mode=mode_,
                             #fps=25,
                             fps=fps,
                             #silent_padding_sec=0.5,
@@ -518,10 +518,13 @@ def handle_latentsync():
         force_rate = int(data.get('force_rate', 25))
         fps = float(data.get('fps', 25.0))
 
+        mode = str(data.get('mode', 'pingpong'))
+
         logger.info("--------------------------------------------------------------------")
         logger.info(f"custom_width : {custom_width}, custom_height : {custom_height}")
         logger.info(f"force_rate : {force_rate}, fps : {fps}")
         logger.info(f"lips_expression : {lips_expression}, inference_steps : {inference_steps}")
+        logger.info(f"mode : {mode}")
         logger.info("--------------------------------------------------------------------")
 
         # 처리
@@ -534,7 +537,8 @@ def handle_latentsync():
             force_rate,
             fps,
             lips_expression,
-            inference_steps
+            inference_steps,
+            mode
         )
         
         # 에러 처리
